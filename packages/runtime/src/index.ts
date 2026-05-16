@@ -5,6 +5,7 @@ export type {
 	FlueSessions,
 	FlueSession,
 	AgentInit,
+	AgentHooks,
 	FlueEvent,
 	FlueEventCallback,
 	SessionData,
@@ -35,6 +36,9 @@ export type {
 	ToolParameters,
 	ThinkingLevel,
 	ProviderSettings,
+	ToolHookCall,
+	ToolHookResult,
+	ToolExecutionHooks,
 } from './types.ts';
 
 export { Type } from '@earendil-works/pi-ai';

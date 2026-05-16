@@ -1,4 +1,9 @@
-import type { AgentMessage, AgentTool, ThinkingLevel } from '@earendil-works/pi-agent-core';
+import type {
+	AgentMessage,
+	AgentTool,
+	AgentToolResult,
+	ThinkingLevel,
+} from '@earendil-works/pi-agent-core';
 import type { ImageContent, Model, TSchema } from '@earendil-works/pi-ai';
 import type * as v from 'valibot';
 
@@ -316,6 +321,45 @@ export interface FlueLogger {
 	error(message: string, attributes?: Record<string, unknown>): void;
 }
 
+/**
+ * One model-requested tool invocation, passed to harness `hooks`.
+ * `args` is the parsed parameter object for that tool (e.g. bash `{ command, timeout? }`).
+ */
+export interface ToolHookCall {
+	toolName: string;
+	toolCallId: string;
+	args: Record<string, unknown>;
+}
+
+/**
+ * Outcome after a tool execute attempt. On success, `result` is the pi-agent tool result
+ * object. On failure, `error` is the thrown value (often an `Error`).
+ */
+export interface ToolHookResult {
+	isError: boolean;
+	result?: AgentToolResult<any>;
+	error?: unknown;
+}
+
+/** Per-stage callbacks for tool execution on a harness. */
+export interface ToolExecutionHooks {
+	/**
+	 * Runs before the tool body executes. Throw to block execution; the error is returned
+	 * to the model as the tool error result.
+	 */
+	before?: (call: ToolHookCall) => void | Promise<void>;
+	/**
+	 * Runs after execution or after a thrown error from the tool body. Throwing from `after`
+	 * is logged and does not change the outcome seen by the model.
+	 */
+	after?: (call: ToolHookCall, outcome: ToolHookResult) => void | Promise<void>;
+}
+
+/** Harness-scoped extension hooks. */
+export interface AgentHooks {
+	tool?: ToolExecutionHooks;
+}
+
 /** Harness options. A default model is required unless explicitly disabled with `model: false`. */
 export interface AgentInit {
 	/** Harness name. Defaults to `"default"`. */
@@ -369,6 +413,13 @@ export interface AgentInit {
 	 * Per-call tools are added on top and must not reuse the same names.
 	 */
 	tools?: ToolDef[];
+
+	/**
+	 * Optional hooks for this harness (e.g. inspect or block tool calls before they run).
+	 * Task child sessions inherit the same hooks. Thrown errors from `before` become the
+	 * tool error result seen by the model.
+	 */
+	hooks?: AgentHooks;
 
 	/**
 	 * Compaction tuning. When context approaches the model's window limit,

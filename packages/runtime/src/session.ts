@@ -50,6 +50,7 @@ import { createFlueFs } from './sandbox.ts';
 
 import type {
 	AgentConfig,
+	AgentHooks,
 	BranchSummaryEntry,
 	CallHandle,
 	CompactionEntry,
@@ -76,6 +77,11 @@ import type {
 	ToolDef,
 } from './types.ts';
 import { addUsage, emptyUsage, fromProviderUsage } from './usage.ts';
+import {
+	runAfterToolHooks,
+	runBeforeToolHooks,
+	wrapAgentToolsWithHooks,
+} from './tool-hooks.ts';
 
 const MAX_TASK_DEPTH = 4;
 
@@ -107,6 +113,7 @@ interface SessionInitOptions {
 	taskDepth?: number;
 	createTaskSession?: CreateTaskSession;
 	onDelete?: () => void;
+	hooks?: AgentHooks;
 }
 
 // TODO: rename `RuntimeScopeOptions` → `CallOverrides` and `withScopedRuntime`
@@ -421,6 +428,7 @@ export class Session implements FlueSession {
 	private taskDepth: number;
 	private createTaskSession: CreateTaskSession | undefined;
 	private onDelete: (() => void) | undefined;
+	private hooks: AgentHooks | undefined;
 
 	constructor(options: SessionInitOptions) {
 		this.name = options.name;
@@ -435,6 +443,7 @@ export class Session implements FlueSession {
 		this.taskDepth = options.taskDepth ?? 0;
 		this.createTaskSession = options.createTaskSession;
 		this.onDelete = options.onDelete;
+		this.hooks = options.hooks;
 
 		this.metadata = options.existingData?.metadata ?? {};
 		this.createdAt = options.existingData?.createdAt;
@@ -447,10 +456,10 @@ export class Session implements FlueSession {
 		assertRoleExists(this.config.roles, this.sessionRole);
 
 		const builtinTools = this.createBuiltinTools(this.env, []);
-		const tools = [
-			...builtinTools,
-			...this.createCustomTools(this.agentTools, builtinTools),
-		];
+		const tools = wrapAgentToolsWithHooks(
+			[...builtinTools, ...this.createCustomTools(this.agentTools, builtinTools)],
+			this.hooks,
+		);
 
 		const previousMessages = this.history.buildContext();
 
@@ -685,6 +694,32 @@ export class Session implements FlueSession {
 
 				this.emit({ type: 'tool_start', toolName: 'bash', toolCallId, args });
 
+				const hookCall = { toolName: 'bash' as const, toolCallId, args };
+
+				try {
+					await runBeforeToolHooks(hookCall, this.hooks);
+				} catch (beforeError) {
+					await runAfterToolHooks(
+						hookCall,
+						{ isError: true, error: beforeError },
+						this.hooks,
+					);
+					const errResult: AgentToolResult<any> = {
+						content: [{ type: 'text', text: getErrorMessage(beforeError) }],
+						details: { command, exitCode: -1 },
+					};
+					await this.appendShellTriple(toolCallId, args, errResult, true);
+					this.emit({
+						type: 'tool_call',
+						toolName: 'bash',
+						toolCallId,
+						isError: true,
+						result: errResult,
+						durationMs: durationSince(toolStartMs),
+					});
+					throw beforeError;
+				}
+
 				try {
 					const result = await this.env.exec(command, {
 						env: options?.env,
@@ -697,6 +732,11 @@ export class Session implements FlueSession {
 						exitCode: result.exitCode,
 					};
 					const toolResult = formatBashResult(shellResult, command);
+					await runAfterToolHooks(
+						hookCall,
+						{ isError: false, result: toolResult },
+						this.hooks,
+					);
 					await this.appendShellTriple(toolCallId, args, toolResult, false);
 					this.emit({
 						type: 'tool_call',
@@ -713,6 +753,7 @@ export class Session implements FlueSession {
 					// number on both branches. -1 is the conventional sentinel for
 					// "no exit recorded" (the same one env.exec uses internally for
 					// sandbox-level failures — see sandbox.ts).
+					await runAfterToolHooks(hookCall, { isError: true, error }, this.hooks);
 					const errResult: AgentToolResult<any> = {
 						content: [{ type: 'text', text: getErrorMessage(error) }],
 						details: { command, exitCode: -1 },
@@ -964,11 +1005,10 @@ export class Session implements FlueSession {
 			[...this.agentTools, ...options.tools],
 			builtinTools,
 		);
-		this.harness.state.tools = [
-			...builtinTools,
-			...customTools,
-			...(options.extraTools ?? []),
-		];
+		this.harness.state.tools = wrapAgentToolsWithHooks(
+			[...builtinTools, ...customTools, ...(options.extraTools ?? [])],
+			this.hooks,
+		);
 		try {
 			return await fn({ resolvedModel });
 		} finally {

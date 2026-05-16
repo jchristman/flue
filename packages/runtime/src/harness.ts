@@ -5,6 +5,7 @@ import { createCwdSessionEnv, createFlueFs } from './sandbox.ts';
 import { type CreateTaskSessionOptions, deleteSessionTree, Session } from './session.ts';
 import type {
 	AgentConfig,
+	AgentHooks,
 	CallHandle,
 	FlueEventCallback,
 	FlueFs,
@@ -45,6 +46,7 @@ export class Harness implements FlueHarness {
 		private eventCallback?: FlueEventCallback,
 		private agentTools: ToolDef[] = [],
 		private toolFactory?: SessionToolFactory,
+		private hooks?: AgentHooks,
 	) {
 		this.fs = createFlueFs(env);
 	}
@@ -112,6 +114,7 @@ export class Harness implements FlueHarness {
 			onAgentEvent: this.decorateEventCallback(this.eventCallback),
 			agentTools: this.agentTools,
 			toolFactory: this.toolFactory,
+			hooks: this.hooks,
 			sessionRole: options?.role,
 			taskDepth: 0,
 			createTaskSession: (taskOptions) => this.createTaskSession(taskOptions),
@@ -178,6 +181,7 @@ export class Harness implements FlueHarness {
 			onAgentEvent: eventCallback,
 			agentTools: this.agentTools,
 			toolFactory: this.toolFactory,
+			hooks: this.hooks,
 			sessionRole: options.role,
 			taskDepth: options.depth,
 			createTaskSession: (childOptions) => this.createTaskSession(childOptions),

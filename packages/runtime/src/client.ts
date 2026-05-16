@@ -170,6 +170,7 @@ export function createFlueContext(config: FlueContextConfig): FlueContextInterna
 					},
 					options.tools,
 					toolFactory,
+					options.hooks,
 				);
 			} catch (error) {
 				initializedHarnessNames.delete(name);
